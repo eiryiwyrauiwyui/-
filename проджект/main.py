@@ -1,0 +1,354 @@
+import arcade
+import random
+import math
+import os
+
+W_WIDTH, W_HEIGHT = 1200, 800
+TITLE = "Курочкин"
+
+GRAV = 1.3  
+SPD = 6
+JMP_SPD = 26  
+COYOTE = 0.1   
+BUF_TM = 0.12  
+
+W_RAD = 135
+MULT = [0, 2, 0, 5, 0, 0, 1, 10]
+
+COLORS = [
+    (255, 50, 50), (50, 150, 255), (150, 50, 250), (50, 255, 150),
+    (255, 150, 50), (255, 255, 50), (255, 100, 200), (255, 215, 0)
+]
+
+
+class FallingStar(arcade.Sprite):
+    def __init__(self):
+        super().__init__(":resources:images/items/star.png", scale=0.4)
+        
+        self.ch_x = random.uniform(-1.2, -2.2)
+        self.ch_y = random.uniform(-1.5, -2.5)
+
+    def update(self, delta_time: float = 1/60):
+        self.center_x += self.ch_x
+        self.center_y += self.ch_y
+        self.angle += 2
+        
+        if self.top < 0 or self.right < 0:
+            self.remove_from_sprite_lists()
+
+
+class MenuView(arcade.View):
+    def __init__(self):
+        super().__init__()
+        
+        self.t1 = arcade.Text(
+            "Курочкин Дмитрий", W_WIDTH/2, W_HEIGHT/2 + 50, 
+            arcade.color.GOLD, 30, anchor_x="center", bold=True
+        )
+        self.t2 = arcade.Text(
+            "10 попыток! Нажмите любую клавишу на p или exp пауза", W_WIDTH/2, W_HEIGHT/2, 
+            arcade.color.WHITE, 18, anchor_x="center"
+        )
+
+    def on_draw(self):
+        self.clear()
+        self.t1.draw()
+        self.t2.draw()
+
+    def on_key_press(self, key, _):
+        self.window.show_view(GameView())
+
+
+class GameOverView(arcade.View):
+    def __init__(self, sc):
+        super().__init__()
+        self.sc = sc
+        
+        self.t1 = arcade.Text(
+            "ИГРА ОКОНЧЕНА", W_WIDTH/2, W_HEIGHT/2 + 50, 
+            arcade.color.RED, 35, anchor_x="center", bold=True
+        )
+        self.t2 = arcade.Text(
+            f"ИТОГОВЫЙ КАПИТАЛ: ${self.sc}", W_WIDTH/2, W_HEIGHT/2, 
+            arcade.color.GOLD, 25, anchor_x="center"
+        )
+        self.t3 = arcade.Text(
+            "Нажмите R для новой игры", W_WIDTH/2, W_HEIGHT/2 - 50, 
+            arcade.color.WHITE, 15, anchor_x="center"
+        )
+
+    def on_draw(self):
+        self.clear()
+        self.t1.draw()
+        self.t2.draw()
+        self.t3.draw()
+
+    def on_key_press(self, key, _):
+        if key == arcade.key.R: 
+            self.window.show_view(GameView())
+
+
+class GameView(arcade.View):
+    def __init__(self):
+        super().__init__()
+        
+        self.p_list = arcade.SpriteList()
+        self.w_list = arcade.SpriteList()
+        self.pt_list = arcade.SpriteList()
+        self.s_list = arcade.SpriteList()
+        
+        self.t_right = arcade.load_texture(":resources:/images/animated_characters/female_adventurer/femaleAdventurer_idle.png")
+        self.t_left = self.t_right.flip_left_right()
+        
+        self.hero = arcade.Sprite(self.t_right, scale=0.6)
+        self.hero.center_x, self.hero.center_y = 150, 150
+        self.p_list.append(self.hero)
+        
+        self.k_left = False
+        self.k_right = False
+        self.k_jump = False
+        self.paused = False
+        
+        self.b_timer = 0.0
+        self.g_timer = 999.0
+        
+        self.money = 1000
+        self.bet = 0
+        self.tries = 10 
+        self.best = self.load_score()
+        
+        self.w_ang = 0
+        self.w_spd = 0
+        self.is_spin = False
+        self.w_pos = (1200, 320)
+        
+        self.cam = arcade.camera.Camera2D()
+        self.gui = arcade.camera.Camera2D()
+        
+        self.ui_cash = arcade.Text("", 40, W_HEIGHT - 60, arcade.color.GOLD, 22, bold=True)
+        self.ui_bet = arcade.Text("", 40, W_HEIGHT - 95, arcade.color.WHITE, 18)
+        self.ui_best = arcade.Text("", 40, W_HEIGHT - 120, arcade.color.GRAY, 14)
+        self.ui_tries = arcade.Text("", 40, W_HEIGHT - 145, arcade.color.RED, 16, bold=True)
+        self.ui_hint = arcade.Text("1,2,3,4 - СТАВКА | R - ИГРАТЬ | C - СБРОС", W_WIDTH//2, 60, arcade.color.WHITE, 18, anchor_x="center", bold=True)
+        self.ui_p_text = arcade.Text("ПАУЗА", W_WIDTH/2, W_HEIGHT/2, arcade.color.WHITE, 50, anchor_x="center", bold=True)
+        
+        self.m_texts = [arcade.Text(f"x{m}", 0, 0, arcade.color.BLACK, 14, anchor_x="center", bold=True) for m in MULT]
+        
+        self.snd_j = arcade.load_sound(":resources:/sounds/jump1.wav")
+        self.snd_w = arcade.load_sound(":resources:/sounds/upgrade4.wav")
+
+        arcade.schedule(self.spawn_star, 5.0)
+        self.setup_lvl()
+
+    def spawn_star(self, dt):
+        if self.paused: return
+        star = FallingStar()
+        star.center_x = self.hero.center_x + random.randint(300, 700)
+        star.center_y = W_HEIGHT - 50
+        self.s_list.append(star)
+
+    def setup_lvl(self):
+        for x in range(0, 5000, 64):
+            wall = arcade.Sprite(":resources:/images/tiles/grassMid.png", scale=0.5)
+            wall.bottom, wall.left = 0, x
+            self.w_list.append(wall)
+            
+        self.phys = arcade.PhysicsEnginePlatformer(self.hero, walls=self.w_list, gravity_constant=GRAV)
+
+    def load_score(self):
+        if os.path.exists("stats.txt"):
+            try:
+                with open("stats.txt", "r") as f: 
+                    return int(f.read())
+            except: 
+                return 0
+        return 0
+
+    def save_score(self):
+        with open("stats.txt", "w") as f: 
+            f.write(str(self.best))
+
+    def spawn_p(self, win=False):
+        wx, wy = self.w_pos
+        count = 15 if win else 1
+        
+        for _ in range(count):
+            p = arcade.SpriteCircle(random.randint(2, 4), arcade.color.GOLD if win else arcade.color.CYAN)
+            p.center_x = wx + random.uniform(-10, 10)
+            p.center_y = wy + (W_RAD if not win else random.uniform(-10, 10))
+            p.change_x = random.uniform(-4, 4)
+            p.change_y = random.uniform(2, 8)
+            p.alpha = 255
+            self.pt_list.append(p)
+
+    def spawn_trail(self, x, y):
+        for _ in range(2):
+            p = arcade.SpriteCircle(random.randint(1, 3), arcade.color.PASTEL_YELLOW)
+            p.center_x = x
+            p.center_y = y
+            p.change_x = random.uniform(-1, 1)
+            p.change_y = random.uniform(-1, 1)
+            p.alpha = 255
+            self.pt_list.append(p)
+
+    def on_draw(self):
+        self.clear()
+        self.cam.use()
+        
+        arcade.draw_lrbt_rectangle_filled(0, 5000, 0, 2000, (15, 20, 35))
+        
+        self.w_list.draw()
+        self.pt_list.draw()
+        self.s_list.draw()
+        
+        wx, wy = self.w_pos
+        arcade.draw_circle_outline(wx, wy, W_RAD + 10, arcade.color.CYAN, 3)
+        
+        for i in range(8):
+            ang = i * 45 + self.w_ang
+            arcade.draw_arc_filled(wx, wy, W_RAD * 2, W_RAD * 2, COLORS[i], ang, ang + 45)
+            
+            rad = math.radians(ang + 22.5)
+            self.m_texts[i].x = wx + (W_RAD - 35) * math.cos(rad)
+            self.m_texts[i].y = wy + (W_RAD - 35) * math.sin(rad)
+            self.m_texts[i].draw()
+            
+        arcade.draw_triangle_filled(wx, wy + W_RAD + 30, wx - 20, wy + W_RAD - 10, wx + 20, wy + W_RAD - 10, arcade.color.GOLD)
+        self.p_list.draw()
+
+        self.gui.use()
+        
+        self.ui_cash.text = f"КАПИТАЛ: ${self.money}"
+        self.ui_bet.text = f"СТАВКА: ${self.bet}"
+        self.ui_best.text = f"РЕКОРД: ${self.best}"
+        self.ui_tries.text = f"ВРАЩЕНИЙ: {self.tries}"
+        
+        self.ui_cash.draw()
+        self.ui_bet.draw()
+        self.ui_best.draw()
+        self.ui_tries.draw()
+        
+        if self.paused:
+            arcade.draw_lrbt_rectangle_filled(0, W_WIDTH, 0, W_HEIGHT, (0, 0, 0, 150))
+            self.ui_p_text.draw()
+        elif math.dist(self.hero.position, self.w_pos) < 300: 
+            self.ui_hint.draw()
+
+    def on_update(self, dt):
+        if self.paused: return
+
+        self.hero.change_x = (SPD if self.k_right else -SPD if self.k_left else 0)
+        
+        on_ground = self.phys.can_jump(y_distance=6)
+        self.g_timer = 0 if on_ground else self.g_timer + dt
+        
+        if self.b_timer > 0: 
+            self.b_timer -= dt
+            
+        if (self.k_jump or self.b_timer > 0) and (on_ground or self.g_timer <= COYOTE):
+            self.hero.change_y = JMP_SPD
+            self.b_timer = 0
+            arcade.play_sound(self.snd_j)
+
+        self.phys.update()
+        self.s_list.update(dt)
+        
+        for s in self.s_list: 
+            self.spawn_trail(s.center_x, s.center_y)
+        
+        hit_list = arcade.check_for_collision_with_list(self.hero, self.s_list)
+        
+        for s in hit_list: 
+            self.money += 500
+            s.remove_from_sprite_lists()
+            arcade.play_sound(self.snd_w)
+
+        self.cam.position = arcade.math.lerp_2d(self.cam.position, (self.hero.center_x, W_HEIGHT/2), 0.1)
+        
+        if self.is_spin:
+            self.w_ang += self.w_spd
+            self.w_spd *= 0.992
+            self.spawn_p()
+            
+            if self.w_spd < 0.1:
+                self.is_spin = False
+                idx = int(((90 - self.w_ang) % 360) // 45)
+                self.money += self.bet * MULT[idx]
+                
+                if MULT[idx] > 0: 
+                    self.spawn_p(True)
+                    arcade.play_sound(self.snd_w)
+                
+                if self.money > self.best:
+                    self.best = self.money
+                    self.save_score()
+                
+                self.bet = 0
+                self.tries -= 1
+                
+                if self.tries <= 0: 
+                    self.window.show_view(GameOverView(self.money))
+
+        for p in self.pt_list:
+            p.center_x += p.change_x
+            p.center_y += p.change_y
+            p.alpha -= 5
+            
+            if p.alpha <= 0: 
+                p.remove_from_sprite_lists()
+
+    def on_key_press(self, key, _):
+        if key == arcade.key.ESCAPE or key == arcade.key.P:
+            self.paused = not self.paused
+            return
+
+        if self.paused: return
+
+        dist = math.dist(self.hero.position, self.w_pos)
+        
+        if dist < 300 and not self.is_spin and self.tries > 0:
+            if key == arcade.key.KEY_1 and self.money >= 10: 
+                self.money -= 10
+                self.bet += 10
+            elif key == arcade.key.KEY_2 and self.money >= 50: 
+                self.money -= 50
+                self.bet += 50
+            elif key == arcade.key.KEY_3 and self.money >= 100: 
+                self.money -= 100
+                self.bet += 100
+            elif key == arcade.key.KEY_4 and self.money >= 1000: 
+                self.money -= 1000
+                self.bet += 1000
+            elif key == arcade.key.C: 
+                self.money += self.bet
+                self.bet = 0
+            elif key == arcade.key.R and self.bet > 0: 
+                self.is_spin = True
+                self.w_spd = random.uniform(20, 35)
+
+        if key in (arcade.key.A, arcade.key.LEFT): 
+            self.k_left = True
+            self.hero.texture = self.t_left
+            
+        if key in (arcade.key.D, arcade.key.RIGHT): 
+            self.k_right = True
+            self.hero.texture = self.t_right
+            
+        if key in (arcade.key.SPACE, arcade.key.W): 
+            self.k_jump = True
+            self.b_timer = BUF_TM
+
+    def on_key_release(self, key, _):
+        if key in (arcade.key.A, arcade.key.LEFT): 
+            self.k_left = False
+            
+        if key in (arcade.key.D, arcade.key.RIGHT): 
+            self.k_right = False
+            
+        if key in (arcade.key.SPACE, arcade.key.W): 
+            self.k_jump = False
+
+if __name__ == "__main__":
+    window = arcade.Window(W_WIDTH, W_HEIGHT, TITLE)
+    window.show_view(MenuView())
+    arcade.run()
